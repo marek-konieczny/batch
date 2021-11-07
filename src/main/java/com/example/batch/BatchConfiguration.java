@@ -1,6 +1,9 @@
 package com.example.batch;
 
-import com.example.batch.model.Product;
+import com.example.batch.model.UserInput;
+import com.example.batch.model.UserOutput;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.batch.core.ChunkListener;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.Step;
 import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
@@ -14,40 +17,44 @@ import org.springframework.batch.item.file.FlatFileItemReader;
 import org.springframework.batch.item.file.FlatFileItemWriter;
 import org.springframework.batch.item.file.mapping.BeanWrapperFieldSetMapper;
 import org.springframework.batch.item.file.mapping.DefaultLineMapper;
-import org.springframework.batch.item.file.mapping.FieldSetMapper;
 import org.springframework.batch.item.file.transform.BeanWrapperFieldExtractor;
 import org.springframework.batch.item.file.transform.DelimitedLineAggregator;
 import org.springframework.batch.item.file.transform.DelimitedLineTokenizer;
-import org.springframework.batch.item.file.transform.FieldSet;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.convert.support.DefaultConversionService;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.FileSystemResource;
 
 @Configuration
 @EnableBatchProcessing
+@Slf4j
 public class BatchConfiguration {
 
     private final JobBuilderFactory jobBuilderFactory;
     private final StepBuilderFactory stepBuilderFactory;
+    private final ChunkListener chunkListener;
 
     BatchConfiguration(JobBuilderFactory jobBuilderFactory, StepBuilderFactory stepBuilderFactory) {
         this.jobBuilderFactory = jobBuilderFactory;
         this.stepBuilderFactory = stepBuilderFactory;
+        this.chunkListener = new CustomChunkLister();
     }
 
     @Bean
-    FlatFileItemReader<Product> reader() {
-        FlatFileItemReader<Product> reader = new FlatFileItemReader<>();
+    FlatFileItemReader<UserInput> reader() {
+        FlatFileItemReader<UserInput> reader = new FlatFileItemReader<>();
         reader.setResource(new ClassPathResource("input.csv"));
 
         DelimitedLineTokenizer tokenizer = new DelimitedLineTokenizer();
-        tokenizer.setNames("id", "quantity", "price");
+        tokenizer.setNames("firstName", "lastName", "birthDate");
 
-        BeanWrapperFieldSetMapper<Product> mapper = new BeanWrapperFieldSetMapper<>();
-        mapper.setTargetType(Product.class);
+        BeanWrapperFieldSetMapper<UserInput> mapper = new BeanWrapperFieldSetMapperCustom<>();
+        mapper.setTargetType(UserInput.class);
 
-        DefaultLineMapper<Product> lineMapper = new DefaultLineMapper<>();
+        mapper.setConversionService(new DefaultConversionService());
+
+        DefaultLineMapper<UserInput> lineMapper = new DefaultLineMapper<>();
         lineMapper.setLineTokenizer(tokenizer);
         lineMapper.setFieldSetMapper(mapper);
 
@@ -56,16 +63,17 @@ public class BatchConfiguration {
         return reader;
     }
 
-    @Bean
-    FlatFileItemWriter<Product> writer() {
-        BeanWrapperFieldExtractor<Product> extractor = new BeanWrapperFieldExtractor<>();
-        extractor.setNames(new String[] {"id", "quantity", "price"});
 
-        DelimitedLineAggregator<Product> aggregator = new DelimitedLineAggregator<>();
+    @Bean
+    FlatFileItemWriter<UserOutput> writer() {
+        BeanWrapperFieldExtractor<UserOutput> extractor = new BeanWrapperFieldExtractor<>();
+        extractor.setNames(new String[] {"firstName", "lastName", "birthYear"});
+
+        DelimitedLineAggregator<UserOutput> aggregator = new DelimitedLineAggregator<>();
         aggregator.setDelimiter(",");
         aggregator.setFieldExtractor(extractor);
 
-        FlatFileItemWriter<Product> writer = new FlatFileItemWriter<>();
+        FlatFileItemWriter<UserOutput> writer = new FlatFileItemWriter<>();
         writer.setResource(new FileSystemResource("output.csv"));
         writer.setShouldDeleteIfExists(true);
         writer.setLineAggregator(aggregator);
@@ -80,15 +88,16 @@ public class BatchConfiguration {
 
     @Bean
     Step priceChange(
-            ItemReader<Product> reader,
-            ItemProcessor<Product, Product> processor,
-            ItemWriter<Product> writer) {
+            ItemReader<UserInput> reader,
+            ItemProcessor<UserInput, UserOutput> processor,
+            ItemWriter<UserOutput> writer) {
 
         return stepBuilderFactory.get("priceChange")
-                .<Product, Product>chunk(50)
+                .<UserInput, UserOutput>chunk(100)
                 .reader(reader)
                 .processor(processor)
                 .writer(writer)
+                .listener(chunkListener)
                 .build();
 
     }
